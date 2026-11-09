@@ -46,7 +46,16 @@ main() {
   fi
 
   echo "==> GitHub access"
-  until $SSH_CMD -T git@github.com 2>&1 </dev/null | grep -q "successfully authenticated"; do
+  until GIT_SSH_COMMAND="$SSH_CMD" git ls-remote "$REPO" >/dev/null 2>&1 </dev/null; do
+    who="$($SSH_CMD -T git@github.com 2>&1 </dev/null | sed -n 's/^Hi \([^!]*\)!.*/\1/p' || true)"
+    if [ -n "$who" ]; then
+      echo
+      echo "    Hi $who, thanks for your interest in this setup!"
+      echo "    It only works for martin-lundin's own machines, though: it installs a"
+      echo "    private dotfiles repo that your GitHub account can't read. Nothing past"
+      echo "    git and an SSH key was set up. Feel free to borrow ideas from bootstrap.sh."
+      exit 1
+    fi
     echo "    This machine's key is not on GitHub yet. Add it as an Authentication Key at"
     echo "    https://github.com/settings/ssh/new :"
     echo
