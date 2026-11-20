@@ -4,10 +4,18 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/martin-lundin/bootstrap/main/bootstrap.sh | bash
 #
+# macOS: Homebrew, gh and Bitwarden, then a browser login to GitHub (the
+# passkey comes from Bitwarden, app or browser extension) and a clone over
+# HTTPS. No key file: install.sh gives the Mac its Secure Enclave keys and
+# switches the clone to ssh once GitHub knows them.
+# Linux: an ssh key you add to GitHub, then a clone over ssh.
+#
 # Safe to re-run: every step skips itself if already done.
 set -euo pipefail
 
 REPO="git@github.com:martin-lundin/dotfiles.git"
+REPO_HTTPS="https://github.com/martin-lundin/dotfiles.git"
+REPO_SLUG="martin-lundin/dotfiles"
 DEST="$HOME/dotfiles"
 KEY="$HOME/.ssh/id_ed25519"
 SSH_CMD="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
@@ -120,6 +128,68 @@ step_git() {
   ok "git is installed"
 }
 
+# macOS: Homebrew (it also needs the Command Line Tools from step_git), gh
+# for the GitHub login, and Bitwarden for the passkey that login asks for.
+step_tools() {
+  ui_step "Homebrew, gh and Bitwarden" \
+    "Homebrew installs the rest; gh logs this Mac in to GitHub; Bitwarden" \
+    "holds the passkey for that login (its browser extension works too)."
+  local b
+  for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -x "$b" ] && { eval "$("$b" shellenv)"; break; }
+  done
+  if command -v brew >/dev/null 2>&1; then
+    ok "Homebrew is installed"
+  else
+    info "Installing Homebrew (it asks for your password)"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/tty ||
+      fail "Installing Homebrew failed - see above, then re-run."
+    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+      [ -x "$b" ] && { eval "$("$b" shellenv)"; break; }
+    done
+    command -v brew >/dev/null 2>&1 || fail "Homebrew is still missing - install it and re-run."
+    ok "Homebrew is installed"
+  fi
+  if command -v gh >/dev/null 2>&1; then
+    ok "gh is installed"
+  else
+    brew install gh || fail "Installing gh failed - see above, then re-run."
+    ok "gh is installed"
+  fi
+  if [ -d /Applications/Bitwarden.app ]; then
+    ok "Bitwarden is installed"
+  else
+    brew install --cask bitwarden || fail "Installing Bitwarden failed - see above, then re-run."
+    ok "Bitwarden is installed"
+  fi
+}
+
+# macOS: log in to GitHub in the browser. The scopes let install.sh register
+# this Mac's keys on GitHub later without asking again.
+step_github_login() {
+  ui_step "GitHub login" \
+    "The dotfiles repo is private. gh opens your browser to log in to GitHub;" \
+    "use the passkey (or password and code) from Bitwarden."
+  if ! gh auth status -h github.com >/dev/null 2>&1; then
+    info "Log in to Bitwarden first (the app or the browser extension) if you have not yet."
+    gh auth login -h github.com -p https -w -s admin:public_key,admin:ssh_signing_key </dev/tty ||
+      fail "The GitHub login did not complete - re-run to try again."
+  fi
+  gh auth setup-git -h github.com >/dev/null 2>&1 || true
+  if ! gh api "repos/$REPO_SLUG" --silent >/dev/null 2>&1; then
+    local who
+    who="$(gh api user --jq .login 2>/dev/null || echo "there")"
+    ui_box "Hi $who, thanks for your interest in this setup!" \
+      "" \
+      "It only works for martin-lundin's own machines, though: it installs" \
+      "a private dotfiles repo that your GitHub account can't read." \
+      "Nothing past git, Homebrew, gh and Bitwarden was set up. Feel free" \
+      "to borrow ideas from bootstrap.sh."
+    exit 1
+  fi
+  ok "Logged in to GitHub as $(gh api user --jq .login 2>/dev/null), with access to the dotfiles repo"
+}
+
 step_key() {
   ui_step "SSH key" \
     "This machine's own key: how it proves to GitHub (and later to your" \
@@ -194,7 +264,11 @@ step_clone() {
     ok "Already downloaded to $DEST"
     return
   fi
-  GIT_SSH_COMMAND="$SSH_CMD" git clone -q "$REPO" "$DEST"
+  if [ "$OS" = "Darwin" ]; then
+    git clone -q "$REPO_HTTPS" "$DEST"
+  else
+    GIT_SSH_COMMAND="$SSH_CMD" git clone -q "$REPO" "$DEST"
+  fi
   ok "Downloaded to $DEST"
 }
 
@@ -205,16 +279,23 @@ main() {
     fail "No terminal available - run this interactively."
   fi
 
+  local plan="git, an SSH key, GitHub access, then the download."
+  [ "$OS" = "Darwin" ] && plan="git, Homebrew, gh, Bitwarden, a GitHub login, then the download."
   ui_box "dotfiles bootstrap" \
     "Gets this machine ready to install martin-lundin's dotfiles:" \
-    "git, an SSH key, GitHub access, then the download. Each step" \
-    "explains itself, and anything already done is skipped." \
+    "$plan" \
+    "Each step explains itself, and anything already done is skipped." \
     "" \
     "OS: $OS $(uname -m)   Host: $(hostname)"
 
   step_git
-  step_key
-  step_github
+  if [ "$OS" = "Darwin" ]; then
+    step_tools
+    step_github_login
+  else
+    step_key
+    step_github
+  fi
   step_clone
 
   ui_box "Ready" "Handing over to the dotfiles installer..."
