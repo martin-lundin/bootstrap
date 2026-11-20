@@ -11,6 +11,13 @@
 # switches the clone to ssh once GitHub knows them.
 # Linux: an ssh key you add to GitHub, then a clone over ssh.
 #
+# Verified start (recommended): a command stored outside GitHub carries the
+# fleet CA's public key, checks this script's signature (bootstrap.sh.sig)
+# before running it, and passes the key on as BOOTSTRAP_CA; the script then
+# runs the dotfiles installer only if the checked-out commit is signed by the
+# fleet CA too. See README.md. Without BOOTSTRAP_CA nothing is verified, and
+# the script says so and asks before going on.
+#
 # Safe to re-run: every step skips itself if already done.
 set -euo pipefail
 
@@ -23,7 +30,7 @@ SSH_CMD="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 OS="$(uname -s)"
 
 # --- UI: a trimmed copy of lib/ui.sh in the dotfiles repo. Keep in step. ---
-UI_WIDTH=72 UI_STEP=0 UI_STEPS=4
+UI_WIDTH=72 UI_STEP=0 UI_STEPS=5
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
   UI_BOLD=$'\033[1m' UI_DIM=$'\033[2m' UI_OFF=$'\033[0m'
   UI_CYAN=$'\033[36m' UI_GREEN=$'\033[32m' UI_YELLOW=$'\033[33m' UI_RED=$'\033[31m'
@@ -288,6 +295,43 @@ step_clone() {
 }
 
 # Wrapped in main so a truncated download can't run half a script.
+# The dotfiles checkout must be signed by the fleet CA (an admin
+# certificate): the same rule scripts/dotfiles-pull applies to every update,
+# here anchored in BOOTSTRAP_CA from the verified start command instead of in
+# the checkout itself (which is what is being checked).
+step_verify() {
+  ui_step "Verify" \
+    "The dotfiles run as code on this machine, so the downloaded version must" \
+    "be signed by your fleet CA before the installer runs."
+  if [ -z "${BOOTSTRAP_CA:-}" ]; then
+    ui_box "Unverified start" \
+      "This bootstrap was started without the fleet CA key, so neither it nor" \
+      "the dotfiles download can be checked. Use the verified start command" \
+      "you keep outside GitHub (see the README) unless you know why not."
+    ui_yes "Run the dotfiles installer anyway, unverified?" n || fail "Stopped before running anything from the download."
+    return 0
+  fi
+  case "$BOOTSTRAP_CA" in
+    ecdsa-sha2-* | ssh-ed25519\ * | ssh-rsa\ *) ;;
+    *) fail "BOOTSTRAP_CA does not look like an ssh public key." ;;
+  esac
+  local v
+  v="$(git --version | awk '{print $3}')"
+  if [ "$(printf '%s\n2.34\n' "${v%%.windows*}" | sort -V | head -1)" != 2.34 ]; then
+    fail "git $v cannot check ssh signatures (needs 2.34 or newer); not running the installer."
+  fi
+  local signers status
+  signers="$(mktemp)"
+  echo "martin cert-authority $BOOTSTRAP_CA" >"$signers"
+  status="$(git -C "$DEST" -c gpg.ssh.allowedSignersFile="$signers" log -1 --format='%G?' 2>/dev/null || true)"
+  rm -f "$signers"
+  if [ "$status" != G ]; then
+    fail "The dotfiles commit $(git -C "$DEST" rev-parse --short HEAD) is not signed by the fleet CA (status '$status')." \
+      "Not running the installer. Someone may have changed the repository."
+  fi
+  ok "Commit $(git -C "$DEST" rev-parse --short HEAD) is signed by the fleet CA"
+}
+
 main() {
   # With `curl | bash`, stdin is the script itself: prompts must use the tty.
   if ! { : </dev/tty; } 2>/dev/null; then
@@ -312,6 +356,7 @@ main() {
     step_github
   fi
   step_clone
+  step_verify
 
   ui_box "Ready" "Handing over to the dotfiles installer..."
   exec "$DEST/install.sh" </dev/tty
