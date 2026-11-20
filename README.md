@@ -7,8 +7,8 @@ dotfiles repo, then runs its `install.sh`.
 curl -fsSL https://raw.githubusercontent.com/martin-lundin/bootstrap/main/bootstrap.sh | bash
 ```
 
-On macOS it installs the Command Line Tools (git), Homebrew, gh and
-Bitwarden if missing, logs in to GitHub in the browser (`gh auth login`,
+On macOS it installs the Command Line Tools (git), Homebrew and gh if
+missing, opens Bitwarden in the App Store if it is not installed, logs in to GitHub in the browser (`gh auth login`,
 with the passkey from Bitwarden) and clones the dotfiles over HTTPS. No ssh
 key is made: `install.sh` gives the Mac its own keys and switches the clone
 to ssh.

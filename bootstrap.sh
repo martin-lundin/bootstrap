@@ -4,8 +4,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/martin-lundin/bootstrap/main/bootstrap.sh | bash
 #
-# macOS: Homebrew, gh and Bitwarden, then a browser login to GitHub (the
-# passkey comes from Bitwarden, app or browser extension) and a clone over
+# macOS: Homebrew, gh and Bitwarden (from the App Store), then a browser
+# login to GitHub (the passkey comes from Bitwarden, app or browser
+# extension) and a clone over
 # HTTPS. No key file: install.sh gives the Mac its Secure Enclave keys and
 # switches the clone to ssh once GitHub knows them.
 # Linux: an ssh key you add to GitHub, then a clone over ssh.
@@ -156,12 +157,26 @@ step_tools() {
     brew install gh || fail "Installing gh failed - see above, then re-run."
     ok "gh is installed"
   fi
-  if [ -d /Applications/Bitwarden.app ]; then
+  # Bitwarden from the App Store: the fleet's standard copy (its Safari
+  # extension only comes with that one). Found by app ID, whatever its name.
+  if has_bitwarden; then
     ok "Bitwarden is installed"
   else
-    brew install --cask bitwarden || fail "Installing Bitwarden failed - see above, then re-run."
-    ok "Bitwarden is installed"
+    info "Opening Bitwarden in the App Store. Install it from there; its browser extension"
+    info "also works for the GitHub login, so you can carry on without it for now."
+    open "macappstore://apps.apple.com/app/id1352778147" 2>/dev/null || true
+    pause "Press Enter to continue"
+    has_bitwarden && ok "Bitwarden is installed" || info "Continuing without the Bitwarden app"
   fi
+}
+
+has_bitwarden() {
+  local a
+  for a in /Applications/*.app "$HOME/Applications/"*.app; do
+    [ -f "$a/Contents/Info.plist" ] || continue
+    [ "$(defaults read "$a/Contents/Info.plist" CFBundleIdentifier 2>/dev/null)" = com.bitwarden.desktop ] && return 0
+  done
+  return 1
 }
 
 # macOS: log in to GitHub in the browser. The scopes let install.sh register
